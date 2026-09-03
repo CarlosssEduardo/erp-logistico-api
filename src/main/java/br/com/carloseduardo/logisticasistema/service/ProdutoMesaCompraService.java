@@ -1,6 +1,8 @@
 package br.com.carloseduardo.logisticasistema.service;
 
 import br.com.carloseduardo.logisticasistema.model.DicionarioLimpeza;
+import br.com.carloseduardo.logisticasistema.model.HistoricoVenda;
+import br.com.carloseduardo.logisticasistema.model.ProdutoEstoque;
 import br.com.carloseduardo.logisticasistema.model.ProdutoMesaCompra;
 import br.com.carloseduardo.logisticasistema.repository.DicionarioLimpezaRepository;
 import br.com.carloseduardo.logisticasistema.repository.ProdutoMesaCompraRepository;
@@ -8,6 +10,8 @@ import org.apache.poi.ss.usermodel.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import br.com.carloseduardo.logisticasistema.repository.ProdutoEstoqueRepository;
+import br.com.carloseduardo.logisticasistema.repository.HistoricoVendaRepository;
 
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -171,5 +175,49 @@ public class ProdutoMesaCompraService {
             }
         }
         return 0;
+    }
+
+    @Autowired
+    private ProdutoEstoqueRepository estoqueRepository;
+    @Autowired
+    private HistoricoVendaRepository vendaRepository;
+
+    public List<Map<String, Object>> obterDadosCruzadosMesa(String categoriaAba) {
+        // 1. Busca a base da mesa
+        List<ProdutoMesaCompra> mesa = mesaCompraRepository.findByCategoriaAba(categoriaAba.toUpperCase());
+
+        // 2. Traz TODO o estoque e TODAS as vendas para a memória de uma vez (Zero latência de rede)
+        List<ProdutoEstoque> todoEstoque = estoqueRepository.findAll();
+        List<HistoricoVenda> todasVendas = vendaRepository.findAll();
+
+        // 3. Converte para HashMaps para busca instantânea (O(1))
+        // Nota: Ajuste o "getSku()" ou "getDescricaoLimpa()" de acordo com a chave que você usa para cruzar os dados
+        Map<String, ProdutoEstoque> mapaEstoque = new HashMap<>();
+        for (ProdutoEstoque e : todoEstoque) {
+            mapaEstoque.put(e.getSku(), e);
+        }
+
+        Map<String, HistoricoVenda> mapaVendas = new HashMap<>();
+        for (HistoricoVenda v : todasVendas) {
+            mapaVendas.put(v.getSku(), v);
+        }
+
+        // 4. Monta o pacote final cruzado
+        List<Map<String, Object>> respostaFinal = new ArrayList<>();
+
+        for (ProdutoMesaCompra itemMesa : mesa) {
+            Map<String, Object> linhaCruzada = new HashMap<>();
+            linhaCruzada.put("mesa", itemMesa);
+
+            // Exemplo: Cruzando usando o Código ZL ou a Descrição Limpa (Adapte para sua regra de negócio)
+            String chaveCruzamento = itemMesa.getDescricaoLimpa(); // ou itemMesa.getCodigosFornecedores().get("ZL")
+
+            linhaCruzada.put("estoque", mapaEstoque.getOrDefault(chaveCruzamento, null));
+            linhaCruzada.put("vendas", mapaVendas.getOrDefault(chaveCruzamento, null));
+
+            respostaFinal.add(linhaCruzada);
+        }
+
+        return respostaFinal;
     }
 }

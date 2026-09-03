@@ -101,4 +101,11 @@ public class ProdutoMesaCompraController {
         repository.deleteById(id);
         return ResponseEntity.ok(Map.of("mensagem", "Produto removido da mesa com sucesso!"));
     }
+
+    @GetMapping("/cruzado/{categoriaAba}")
+    public ResponseEntity<List<Map<String, Object>>> listarMesaCruzada(@PathVariable String categoriaAba) {
+        return ResponseEntity.ok(service.obterDadosCruzadosMesa(categoriaAba));
+    }
+
+
 }
