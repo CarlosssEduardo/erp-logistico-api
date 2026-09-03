@@ -21,14 +21,12 @@ public class HistoricoVendaService {
     private HistoricoVendaRepository repository;
 
     public void processarPlanilhaVendas(MultipartFile file, String tipoUpload) throws Exception {
-        // Busca todo o histórico existente para a memória
         List<HistoricoVenda> todosExistentes = repository.findAll();
         Map<String, HistoricoVenda> mapaExistentes = new HashMap<>();
         for (HistoricoVenda h : todosExistentes) {
             mapaExistentes.put(h.getSku(), h);
         }
 
-        // 🔥 Usamos HashSet para evitar duplicadas instantaneamente sem varreduras lentas
         Set<HistoricoVenda> vendasParaSalvar = new HashSet<>();
 
         try (InputStream inputStream = file.getInputStream();
@@ -48,7 +46,6 @@ public class HistoricoVendaService {
                 String nomeProduto = getValorTexto(row.getCell(1)); // Coluna B: Produto
                 Integer qtdVendido = getValorInteiro(row.getCell(2)); // Coluna C: Qtde. Vendido
 
-                // Busca instantânea no Map em memória
                 HistoricoVenda historico = mapaExistentes.get(sku);
                 if (historico == null) {
                     historico = new HistoricoVenda();
@@ -66,11 +63,9 @@ public class HistoricoVendaService {
                     historico.setMediaDiaria(Math.round(media * 100.0) / 100.0);
                 }
 
-                // Adiciona direto ao Set (O HashSet gerencia duplicadas sozinho instantaneamente)
                 vendasParaSalvar.add(historico);
             }
 
-            // Salva tudo de uma vez só no final
             repository.saveAll(vendasParaSalvar);
         }
     }
@@ -83,7 +78,6 @@ public class HistoricoVendaService {
     }
 
     private Integer getValorInteiro(Cell cell) {
-        if == null) return 0; // Correção rápida de sintaxe se necessário, mas mantenha o fluxo original:
         if (cell == null) return 0;
         if (cell.getCellType() == CellType.NUMERIC) return (int) cell.getNumericCellValue();
         if (cell.getCellType() == CellType.STRING) {
