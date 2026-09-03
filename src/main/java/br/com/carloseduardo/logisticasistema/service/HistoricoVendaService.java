@@ -8,10 +8,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
-import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class HistoricoVendaService {
@@ -20,14 +21,15 @@ public class HistoricoVendaService {
     private HistoricoVendaRepository repository;
 
     public void processarPlanilhaVendas(MultipartFile file, String tipoUpload) throws Exception {
-        // 🔥 OTIMIZAÇÃO: Busca todo o histórico de vendas existente de uma só vez para a memória
+        // Busca todo o histórico existente para a memória
         List<HistoricoVenda> todosExistentes = repository.findAll();
         Map<String, HistoricoVenda> mapaExistentes = new HashMap<>();
         for (HistoricoVenda h : todosExistentes) {
             mapaExistentes.put(h.getSku(), h);
         }
 
-        List<HistoricoVenda> vendasParaSalvar = new ArrayList<>();
+        // 🔥 Usamos HashSet para evitar duplicadas instantaneamente sem varreduras lentas
+        Set<HistoricoVenda> vendasParaSalvar = new HashSet<>();
 
         try (InputStream inputStream = file.getInputStream();
              Workbook workbook = WorkbookFactory.create(inputStream)) {
@@ -46,17 +48,12 @@ public class HistoricoVendaService {
                 String nomeProduto = getValorTexto(row.getCell(1)); // Coluna B: Produto
                 Integer qtdVendido = getValorInteiro(row.getCell(2)); // Coluna C: Qtde. Vendido
 
-                // Busca instantânea no Map em memória (Zero consultas de rede!)
+                // Busca instantânea no Map em memória
                 HistoricoVenda historico = mapaExistentes.get(sku);
                 if (historico == null) {
                     historico = new HistoricoVenda();
                     historico.setSku(sku);
                     mapaExistentes.put(sku, historico);
-                    vendasParaSalvar.add(historico);
-                } else {
-                    if (!vendasParaSalvar.contains(historico)) {
-                        vendasParaSalvar.add(historico);
-                    }
                 }
 
                 historico.setProduto(nomeProduto);
@@ -68,9 +65,12 @@ public class HistoricoVendaService {
                     double media = qtdVendido / 7.0;
                     historico.setMediaDiaria(Math.round(media * 100.0) / 100.0);
                 }
+
+                // Adiciona direto ao Set (O HashSet gerencia duplicadas sozinho instantaneamente)
+                vendasParaSalvar.add(historico);
             }
 
-            // Salva tudo de uma vez só no final (Batch Save)
+            // Salva tudo de uma vez só no final
             repository.saveAll(vendasParaSalvar);
         }
     }
@@ -83,6 +83,7 @@ public class HistoricoVendaService {
     }
 
     private Integer getValorInteiro(Cell cell) {
+        if == null) return 0; // Correção rápida de sintaxe se necessário, mas mantenha o fluxo original:
         if (cell == null) return 0;
         if (cell.getCellType() == CellType.NUMERIC) return (int) cell.getNumericCellValue();
         if (cell.getCellType() == CellType.STRING) {
