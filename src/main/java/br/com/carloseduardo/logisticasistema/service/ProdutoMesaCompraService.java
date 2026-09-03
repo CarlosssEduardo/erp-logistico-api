@@ -25,8 +25,19 @@ public class ProdutoMesaCompraService {
     private DicionarioLimpezaRepository dicionarioRepository;
 
     public void processarPlanilhaBase(MultipartFile file, String categoriaAba) throws Exception {
-        List<ProdutoMesaCompra> produtosParaSalvar = new ArrayList<>();
         List<DicionarioLimpeza> palavrasDicionario = dicionarioRepository.findAll();
+        String categoriaUpper = categoriaAba.toUpperCase();
+
+        // 🔥 OTIMIZAÇÃO: Busca TODOS os produtos existentes desta categoria de uma só vez
+        List<ProdutoMesaCompra> listaExistentesDb = mesaCompraRepository.findByCategoriaAba(categoriaUpper);
+
+        // Coloca em um Map para busca instantânea em memória (Chave: descricaoLimpa)
+        Map<String, ProdutoMesaCompra> mapaExistentes = new HashMap<>();
+        for (ProdutoMesaCompra p : listaExistentesDb) {
+            mapaExistentes.put(p.getDescricaoLimpa(), p);
+        }
+
+        List<ProdutoMesaCompra> produtosParaSalvar = new ArrayList<>();
 
         try (InputStream inputStream = file.getInputStream();
              Workbook workbook = WorkbookFactory.create(inputStream)) {
@@ -36,7 +47,6 @@ public class ProdutoMesaCompraService {
 
             if (headerRow == null) throw new RuntimeException("Planilha sem cabeçalho!");
 
-            // 🔥 RASTREADORES DINÂMICOS DE COLUNAS
             int indexMarca = -1;
             int indexModelo = -1;
             int indexProduto = -1;
@@ -56,11 +66,9 @@ public class ProdutoMesaCompraService {
                 } else if (header.equals("PRODUTO") || header.equals("DESCRIÇÃO") || header.equals("DESCRICAO")) {
                     indexProduto = colIdx;
                 } else if (header.startsWith("CODIGO") || header.startsWith("CÓDIGO")) {
-                    // Extrai o nome do Fornecedor (Ex: "CODIGO ZL" -> "ZL")
                     String fornecedor = header.replace("CÓDIGO", "").replace("CODIGO", "").replace(":", "").replace("-", "").trim();
                     if (!fornecedor.isEmpty()) colunasCodigos.put(fornecedor, colIdx);
                 } else if (header.contains("CUSTO")) {
-                    // Extrai o nome do Fornecedor (Ex: "ZL: CUSTO ATUAL" -> "ZL")
                     String fornecedor = "";
                     if (header.contains(":")) {
                         fornecedor = header.split(":")[0].trim();
@@ -71,33 +79,37 @@ public class ProdutoMesaCompraService {
                 }
             }
 
-            // 2. PROCESSA AS LINHAS BASEADO NO MAPEAMENTO DINÂMICO
+            // 2. PROCESSA AS LINHAS USANDO O MAPA EM MEMÓRIA (SEM CONSULTAR O BANCO DENTRO DO LOOP)
             for (Row row : sheet) {
-                if (row.getRowNum() == 0) continue; // Pula o cabeçalho
+                if (row.getRowNum() == 0) continue;
 
                 String descricaoOriginal = indexProduto != -1 ? getValorTexto(row.getCell(indexProduto)) : "";
-                if (descricaoOriginal.isEmpty()) continue; // Produto é obrigatório
+                if (descricaoOriginal.isEmpty()) continue;
 
                 String marca = indexMarca != -1 ? getValorTexto(row.getCell(indexMarca)) : "";
                 String modelo = indexModelo != -1 ? getValorTexto(row.getCell(indexModelo)) : "";
 
                 String descricaoLimpa = limparDescricaoProduto(descricaoOriginal, palavrasDicionario);
 
-                List<ProdutoMesaCompra> existentes = mesaCompraRepository.findByDescricaoLimpaAndCategoriaAba(descricaoLimpa, categoriaAba);
+                // Busca direto no Map da RAM (Zero latência de rede!)
+                ProdutoMesaCompra produto = mapaExistentes.get(descricaoLimpa);
 
-                ProdutoMesaCompra produto;
-                if (existentes.isEmpty()) {
+                if (produto == null) {
                     produto = new ProdutoMesaCompra();
-                    produto.setCategoriaAba(categoriaAba.toUpperCase());
+                    produto.setCategoriaAba(categoriaUpper);
+                    produto.setDescricaoLimpa(descricaoLimpa);
+                    mapaExistentes.put(descricaoLimpa, produto); // Adiciona ao mapa caso repita na mesma planilha
+                    produtosParaSalvar.add(produto);
                 } else {
-                    produto = existentes.get(0);
+                    // Garante que vai salvar a atualização do produto existente
+                    if (!produtosParaSalvar.contains(produto)) {
+                        produtosParaSalvar.add(produto);
+                    }
                 }
 
-                produto.setDescricaoLimpa(descricaoLimpa);
                 if (!marca.isEmpty()) produto.setMarca(marca.toUpperCase());
                 if (!modelo.isEmpty()) produto.setModelo(modelo.toUpperCase());
 
-                // LÊ TODOS OS CÓDIGOS DINAMICAMENTE
                 for (Map.Entry<String, Integer> entry : colunasCodigos.entrySet()) {
                     String cod = getValorTexto(row.getCell(entry.getValue()));
                     if (!cod.isEmpty()) {
@@ -105,17 +117,15 @@ public class ProdutoMesaCompraService {
                     }
                 }
 
-                // LÊ TODOS OS CUSTOS DINAMICAMENTE
                 for (Map.Entry<String, Integer> entry : colunasCustos.entrySet()) {
                     Double custo = getValorNumerico(row.getCell(entry.getValue()));
                     if (custo > 0) {
                         produto.getCustosFornecedores().put(entry.getKey(), custo);
                     }
                 }
-
-                produtosParaSalvar.add(produto);
             }
 
+            // Salva tudo de uma vez só no final (Batch Save)
             mesaCompraRepository.saveAll(produtosParaSalvar);
         }
     }
@@ -148,5 +158,18 @@ public class ProdutoMesaCompraService {
             }
         }
         return 0.0;
+    }
+
+    private Integer getValorInteiro(Cell cell) {
+        if (cell == null) return 0;
+        if (cell.getCellType() == CellType.NUMERIC) return (int) cell.getNumericCellValue();
+        if (cell.getCellType() == CellType.STRING) {
+            try {
+                return Integer.parseInt(cell.getStringCellValue().trim());
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+        return 0;
     }
 }
